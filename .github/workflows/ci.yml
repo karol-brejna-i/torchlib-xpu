@@ -476,6 +476,11 @@ jobs:
       run: |
         pytest -rsf fbgemm_gpu/test/jagged/expand_into_jagged_permute_test.py
         pytest -rsf fbgemm_gpu/test/jagged/jagged_index_select_2d_test.py
+        pytest -rsf fbgemm_gpu/test/jagged/dense_to_jagged_test.py
+        pytest -rsf fbgemm_gpu/test/jagged/jagged_to_padded_dense_test.py
+        pytest -rsf fbgemm_gpu/test/jagged/2d_to_dense_test.py
+        pytest -rsf fbgemm_gpu/test/jagged/1d_to_dense_test.py
+        pytest -rsf fbgemm_gpu/test/jagged/elementwise_binary_test.py
         pytest -rsf fbgemm_gpu/test/sparse/block_bucketize_test.py
         pytest -rsf fbgemm_gpu/test/sparse/cumsum_test.py
         pytest -rsf fbgemm_gpu/test/sparse/misc_ops_test.py
@@ -483,6 +488,20 @@ jobs:
         pytest -rsf fbgemm_gpu/test/sparse/reorder_batched_test.py
         pytest -rsf fbgemm_gpu/test/tbe/utils/generate_vbe_metadata_test.py
         pytest -rsf fbgemm_gpu/test/tbe/utils/split_embeddings_utils_test.py
+    - name: 'Test fbgemm-xpu jagged regressions'
+      working-directory: torchlib-xpu
+      run: |
+        # Upstream FBGEMM tests (patched) cover shared operator behavior and parity.
+        # The tests below cover XPU/SYCL cases that upstream does not:
+        # launch-grid limits, device validation, and strided fast-path inputs.
+        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_device_validation.py
+        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_fp16_dense_batch_alignment.py
+        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_fp16_sentinel_search.py
+        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_fp16_shape_validation.py
+        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_inner_dim_sweep.py
+        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_large_grid.py
+        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_zero_max_length.py
+        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_loop_bounds_overflow.py
 
   publish:
     needs: [ compose, test-torchcodec, test-fbgemm ]
