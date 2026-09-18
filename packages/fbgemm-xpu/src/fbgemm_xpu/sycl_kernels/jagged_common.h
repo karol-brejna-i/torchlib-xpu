@@ -72,6 +72,7 @@
 #include <ATen/native/StridedRandomAccessor.h>
 #include <torch/library.h>
 
+#include "fbgemm_utils/dispatch_macros.h"
 #include "fbgemm_utils/utils.h"
 #include "fbgemm_utils/tensor_utils.h"
 

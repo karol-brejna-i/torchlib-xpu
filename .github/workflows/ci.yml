@@ -31,6 +31,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  FBGEMM_VERSION: v1.8.0
   PR_OR_SHA: ${{ github.event.pull_request.number || github.sha }}
   UNIQUE_ID: ${{ github.run_id }}
 
@@ -439,14 +440,9 @@ jobs:
       uses: actions/checkout@v7
       with:
         repository: pytorch/FBGEMM
-        ref: v1.8.0
+        ref: ${{ env.FBGEMM_VERSION }}
         path: fbgemm
         clean: true
-    - name: 'Patch FBGEMM'
-      working-directory: fbgemm
-      run: |
-        rm -rf .git/rebase-apply
-        git am ../torchlib-xpu/packages/fbgemm-xpu/patches/0001-Add-XPU-support-to-fbgemm-tests.patch
     - name: 'Install Intel drivers'
       run: |
         add-apt-repository -y ppa:kobuk-team/intel-graphics
@@ -472,6 +468,23 @@ jobs:
       run: |
         python -c "import torch; assert torch.xpu.is_available(), 'XPU (Intel GPU) is not available'"
     - name: 'Test fbgemm-xpu'
+      run: |
+        # Upstream FBGEMM tests (patched) cover shared operator behavior and parity.
+        # The tests below cover XPU/SYCL cases that upstream does not:
+        # launch-grid limits, device validation, and strided fast-path inputs.
+        pytest -rsf torchlib-xpu/packages/fbgemm-xpu/tests/
+    - name: 'Patch upstream FBGEMM tests'
+      working-directory: fbgemm
+      run: |
+        rm -rf .git/rebase-apply
+        git am ../torchlib-xpu/packages/fbgemm-xpu/patches/0001-Add-XPU-support-to-fbgemm-tests.patch
+        unexpected=$(git diff --name-only "$FBGEMM_VERSION" HEAD | grep -v '^fbgemm_gpu/test/' || true)
+        if [ -n "$unexpected" ]; then
+          echo "Patches modified non-test FBGEMM files:"
+          echo "$unexpected"
+          exit 1
+        fi
+    - name: 'Test patched upstream test suite'
       working-directory: fbgemm
       run: |
         pytest -rsf fbgemm_gpu/test/jagged/expand_into_jagged_permute_test.py
@@ -488,20 +501,6 @@ jobs:
         pytest -rsf fbgemm_gpu/test/sparse/reorder_batched_test.py
         pytest -rsf fbgemm_gpu/test/tbe/utils/generate_vbe_metadata_test.py
         pytest -rsf fbgemm_gpu/test/tbe/utils/split_embeddings_utils_test.py
-    - name: 'Test fbgemm-xpu jagged regressions'
-      working-directory: torchlib-xpu
-      run: |
-        # Upstream FBGEMM tests (patched) cover shared operator behavior and parity.
-        # The tests below cover XPU/SYCL cases that upstream does not:
-        # launch-grid limits, device validation, and strided fast-path inputs.
-        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_device_validation.py
-        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_fp16_dense_batch_alignment.py
-        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_fp16_sentinel_search.py
-        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_fp16_shape_validation.py
-        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_inner_dim_sweep.py
-        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_large_grid.py
-        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_zero_max_length.py
-        pytest -rsf packages/fbgemm-xpu/tests/test_jagged_loop_bounds_overflow.py
 
   publish:
     needs: [ compose, test-torchcodec, test-fbgemm ]
