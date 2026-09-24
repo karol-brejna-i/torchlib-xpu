@@ -1,0 +1,119 @@
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-c-cpp:
+    name: Analyze C/C++
+    runs-on: ubuntu-24.04
+    container:
+      image: pytorch/manylinux2_28-builder:xpu-v2.13.0-rc1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install build prerequisites
+        run: |
+          set -euo pipefail
+          dnf install -y \
+            cmake \
+            libva-devel \
+            level-zero-devel \
+            pkgconf-pkg-config
+          python3 -m pip install --upgrade pip
+          python3 -m pip install \
+            --extra-index-url https://download.pytorch.org/whl/xpu \
+            'jinja2' \
+            'numpy~=2.0' \
+            'pybind11' \
+            'scikit-build-core>=0.10' \
+            'torch~=2.13.0' \
+            'torchcodec~=0.16.0'
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: manual
+
+      - name: Build C/C++ packages
+        env:
+          CXX: icpx
+        run: |
+          set -euo pipefail
+          source /opt/intel/oneapi/setvars.sh
+
+          PYBIND11_DIR="$(python3 -m pybind11 --cmakedir)"
+          TORCH_PREFIX="$(python3 - <<'PY'
+          import torch
+          print(torch.utils.cmake_prefix_path)
+          PY
+          )"
+          TORCHCODEC_DIR="$(python3 - <<'PY'
+          import importlib.util
+          import pathlib
+
+          spec = importlib.util.find_spec("torchcodec")
+          if spec is None or spec.origin is None:
+              raise SystemExit("torchcodec is not installed")
+
+          package_dir = pathlib.Path(spec.origin).resolve().parent
+          candidates = sorted(package_dir.parent.rglob("TorchCodecConfig.cmake"))
+          if not candidates:
+              raise SystemExit("TorchCodecConfig.cmake was not found")
+
+          print(candidates[0].parent)
+          PY
+          )"
+
+          cmake -S packages/torchcodec-xpu -B build/torchcodec-xpu \
+            -DCMAKE_BUILD_TYPE=Release \
+            -Dpybind11_DIR="$PYBIND11_DIR" \
+            -DCMAKE_PREFIX_PATH="$TORCH_PREFIX" \
+            -DTorchCodec_DIR="$TORCHCODEC_DIR"
+          cmake --build build/torchcodec-xpu --parallel
+
+          cmake -S packages/fbgemm-xpu -B build/fbgemm-xpu \
+            -DCMAKE_BUILD_TYPE=Release \
+            -Dpybind11_DIR="$PYBIND11_DIR" \
+            -DCMAKE_PREFIX_PATH="$TORCH_PREFIX"
+          cmake --build build/fbgemm-xpu --parallel
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:c-cpp
+
+  analyze-python:
+    name: Analyze Python
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          build-mode: none
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:python
